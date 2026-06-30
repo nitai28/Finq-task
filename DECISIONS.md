@@ -6,6 +6,8 @@ Zustand was considered for cross-screen state but was dropped entirely once the 
 Random user profiles are fetched once and cached by TanStack Query with `staleTime: Infinity` — they don't need a separate client store.
 Navigation context (did this profile come from Screen 1 or Screen 2?) is passed via React Router's `location.state`, which is the idiomatic mechanism for exactly this: data scoped to a single navigation event.
 `queryClient.setQueryData` is used to patch the random users cache when a name is edited in Screen 3, keeping the update co-located with the data it mutates.
+The random users query also sets `gcTime: Infinity`. Without it, React Query garbage-collects the cache 5 minutes after the last active subscriber (e.g., when the user navigates to Screen 3). On return, a new fetch would produce 10 *different* random people — breaking identity continuity. `gcTime: Infinity` keeps the same 10 users alive for the session. The saved profiles query does not need this because re-fetching from the backend is safe and correct there.
+Both mutations (`useProfiles`) call `invalidateQueries` in `onSettled`. This is what keeps the saved profiles cache honest after each write — with `staleTime: Infinity` the cache would otherwise never re-sync with the server post-mutation.
 **Tradeoff:** `location.state` is lost on hard refresh — the profile data lives in session memory only. In production I'd persist the random user list to `sessionStorage` or fetch the profile by ID from the backend as a fallback.
 
 ## 2. SQLite over Postgres
@@ -38,8 +40,8 @@ The backend returns the complete saved profile from the DB after `INSERT`, inclu
 
 ## 7. Extension — Optimistic updates with snapshot rollback
 
-All three mutations (Save, Delete, Update) apply optimistic updates: the UI changes immediately before the server responds.
-On error, state is restored from a pre-mutation snapshot and an error toast is shown in Hebrew.
+Save and Delete, and Update-on-saved-profile, all apply optimistic updates: the UI changes immediately before the server responds. On error, state is restored from a pre-mutation snapshot and an error toast is shown in Hebrew.
+Update-on-unsaved-profile is a direct cache patch (`updateRandomUser`) with no server call and therefore no mutation/rollback — there is nothing to roll back because nothing was persisted.
 Chosen over a loading skeleton because a skeleton only improves perceived performance during fetch states. Optimistic updates improve the actual interaction — the happy path (which is the common case for low-risk mutations) feels instant.
 **What I'd build next:** retry logic on the failed mutation before rolling back, so a transient network error doesn't immediately surface as a failure to the user.
 
